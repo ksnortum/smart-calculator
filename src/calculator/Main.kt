@@ -1,40 +1,25 @@
 package calculator
 
 private const val INVALID_MESSAGE = "Invalid expression"
+private val intRegex = "^([+-]?\\d+)".toRegex()
+private val opRegex = "^(\\++|-+|\\*|/)".toRegex()
 
 class Calculator {
     data class Record(val value: Int, val isError: Boolean = false, val errorMessage: String = "")
 
-    data class Expression(private val string: String) {
-        var atEnd = false
-        private var index = 0
-
-        fun thisChar() = string[index]
-
-        fun nextChar(): Boolean {
-            return if (index < string.length - 1) {
-                index++
-                true
-            } else {
-                atEnd = true
-                false
-            }
-        }
+    enum class Operator {
+        PLUS,
+        MINUS,
+        MULTIPLY,
+        DIVIDE,
+        UNKNOWN
     }
 
-    enum class Operator(val symbol: String) {
-        PLUS("+"),
-        MINUS("-"),
-        MULTIPLY("*"),
-        DIVIDE("/"),
-        UNKNOWN("")
-    }
-
-    private val allOperators = Operator.values().joinToString("") { it.symbol }
+    private var input = ""
 
     fun run() {
         while (true) {
-            val input = readln()
+            input = readln()
             if (input.isBlank()) continue
 
             if (input.startsWith('/')) {
@@ -44,81 +29,54 @@ class Calculator {
                     else -> println("Unknown Command")
                 }
             } else {
-                println(evaluateExpression(Expression(input)))
+                println(evaluateExpression())
             }
         }
 
         println("Bye!")
     }
 
-    private fun evaluateExpression(expression: Expression): String {
+    private fun evaluateExpression(): String {
         var result = 0
         var operator = Operator.PLUS
 
         while (true) {
-            val record = getInteger(expression)
+            val record = getInteger()
             if (record.isError) return record.errorMessage
             result = applyOperator(operator, record.value, result)
 
-            if (expression.atEnd) break
+            if (input.isBlank()) break
 
-            operator = getOperator(expression)
+            operator = getOperator()
             if (operator == Operator.UNKNOWN) return INVALID_MESSAGE
         }
 
         return result.toString()
     }
 
-    private fun getInteger(expression: Expression): Record {
-        var number = 0
-        var foundNumber = false
+    private fun getInteger(): Record {
+        removeWhitespace()
+        if (input.isBlank()) return Record(0, isError = true, errorMessage = INVALID_MESSAGE)
+        val matchResults = intRegex.find(input)
 
-        removeWhitespace(expression)
-        if (expression.atEnd) return Record(0, isError = true, errorMessage = INVALID_MESSAGE)
-        val sign = getSign(expression)
-        if (expression.atEnd) return Record(0, isError = true, errorMessage = INVALID_MESSAGE)
-
-        while (!expression.atEnd && expression.thisChar().isDigit()) {
-            number = number * 10 + expression.thisChar().toString().toInt() * sign
-            expression.nextChar()
-            foundNumber = true
-        }
-
-        return if (foundNumber) {
-            Record(number)
-        } else {
+        return if (matchResults == null) {
             Record(0, isError = true, errorMessage = INVALID_MESSAGE)
+        } else {
+            val result = matchResults.value.toInt()
+            input = input.replace(intRegex, "")
+            Record(result)
         }
     }
 
-    private fun getSign(expression: Expression): Int {
-        return when (expression.thisChar()) {
-            '-' -> {
-                expression.nextChar()
-                -1
-            }
-            '+' -> {
-                expression.nextChar()
-                1
-            }
-            else -> 1
-        }
+    private fun removeWhitespace() {
+        input = input.replace("^\\s*".toRegex(), "")
     }
 
-    private fun removeWhitespace(expression: Expression) {
-        while (!expression.atEnd && expression.thisChar().isWhitespace()) {
-            expression.nextChar()
-        }
-    }
-
-    private fun getOperator(expression: Expression): Operator {
-        var result = ""
-        removeWhitespace(expression)
-
-        while (!expression.atEnd && expression.thisChar() in allOperators) {
-            result += expression.thisChar()
-            expression.nextChar()
-        }
+    private fun getOperator(): Operator {
+        removeWhitespace()
+        val matchResults = opRegex.find(input) ?: return Operator.UNKNOWN
+        val result = matchResults.value
+        input = input.replace(opRegex, "")
 
         return checkOperator(result)
     }

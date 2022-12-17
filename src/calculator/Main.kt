@@ -1,34 +1,45 @@
 package calculator
 
+import java.math.BigInteger
+
 private const val INVALID_EXPRESSION = "Invalid expression"
 private const val INVALID_IDENTIFIER = "Invalid identifier"
 private const val INVALID_ASSIGNMENT = "Invalid assignment"
 private const val UNKNOWN_VARIABLE = "Unknown variable"
 
-private val intRegex = "^([+-]?\\d+)".toRegex()
-private val opRegex = "^(\\++|-+|\\*|/)".toRegex()  // Tied to enum Operator
+private val numberRegex = "^([-+]?\\d+)".toRegex()
+private val opRegex = "^(\\++|-+|\\*|/|\\^)".toRegex()  // Tied to enum Operator, no parens
 private val identRegex = "^([a-zA-Z]+)".toRegex()
 
-private val vars = mutableMapOf<String, Int>()
+private val vars = mutableMapOf<String, BigInteger>()
+
+private val postfix = ArrayDeque<Any>()
+private val ops = ArrayDeque<Calculator.Operator>()
 
 class Calculator {
+    data class OperatorRecord(val symbol: String, val precedence: Int)
 
-    // See also: checkOperator() and applyOperator()
-    enum class Operator(val symbol: String) {
-        PLUS("+"),
-        MINUS("-"),
-        MULTIPLY("*"),
-        DIVIDE("/"),
-        UNKNOWN("")
+    // See also: checkOperator()
+    enum class Operator(val data: OperatorRecord) {
+        PLUS(OperatorRecord("+", 1)),
+        MINUS(OperatorRecord("-", 1)),
+        MULTIPLY(OperatorRecord("*", 2)),
+        DIVIDE(OperatorRecord("/", 2)),
+        EXPONENT(OperatorRecord("^", 3)),
+        LEFT_PAREN(OperatorRecord("(", 5)),
+        RIGHT_PAREN(OperatorRecord(")", 5)),
+        UNKNOWN(OperatorRecord("", 0))
     }
 
-    private val allOperators = Operator.values().joinToString("") { it.symbol }
+    private val allOperators = Operator.values().joinToString("") {
+        if (it.data.symbol !in "()") it.data.symbol else ""
+    }
     private var input = ""
 
     fun run() {
         while (true) {
-            input = readln()
-            if (input.isBlank()) continue
+            input = readln().trim()
+            if (input.isEmpty()) continue
 
             // Do "/" commands
             if (input.startsWith('/')) {
@@ -41,9 +52,9 @@ class Calculator {
                 try {
                     // Might be an assignment
                     if (input.contains('=')) {
-                        doAssignment()
+                        processAssignment()
                     } else {
-                        // Evaluate expression
+                        infixToPostfix()
                         println(evaluateExpression())
                     }
                 // All errors from doAssignment() and evaluateExpression() (and below) bubble up to here
@@ -59,21 +70,20 @@ class Calculator {
     /**
      * Assignment in the form identifier1 = (intValue | identifier2)
      */
-    private fun doAssignment() {
+    private fun processAssignment() {
         // Get left-hand side of assignment
         val lhs = getIdent()
 
         // Get assignment operator
         input = input.trimStart()
-        // if (input.isEmpty()) ...?
+        // if (input.isEmpty()) not necessary because we know the input contains an =
         if (input.first() != '=') throw Exception(INVALID_IDENTIFIER)
         input = input.drop(1).trimStart()
         if (input.isEmpty()) throw Exception(INVALID_ASSIGNMENT)
 
         // Get right-hand side of assignment
-        // TODO, rhs should really be able to handle a full expression
-        val rhs: Int
-        val matchResult = intRegex.find(input)
+        val rhs: BigInteger
+        val matchResult = numberRegex.find(input)
 
         // Not an integer
         if (matchResult == null) {
@@ -87,8 +97,8 @@ class Calculator {
             rhs = getVariable(ident)
         } else {
             // Is an integer
-            input = input.replace(intRegex, "")
-            rhs = matchResult.value.toInt()
+            input = input.replace(numberRegex, "")
+            rhs = matchResult.value.toBigInteger()
         }
 
         // Nothing can come after the assignment
@@ -109,8 +119,9 @@ class Calculator {
         // These are the only things that can follow a valid identifier
         if (input.isBlank() || // end of line
             input.first().isWhitespace() || // a whitespace character
-            input.trimEnd().first() == '=' || // an equals sign
-            allOperators.contains(input.trimEnd().first()) // or any valid operator
+            input.trimStart().first() == '=' || // an equals sign
+            input.trimStart().first() == ')' || // a close paren
+            allOperators.contains(input.trimStart().first()) // or any valid operator
         ) {
             return matchResult.value
         }
@@ -121,7 +132,7 @@ class Calculator {
     /**
      * @return the integer amount for this variable, or throws error
      */
-    private fun getVariable(ident: String): Int {
+    private fun getVariable(ident: String): BigInteger {
         return if (vars.contains(ident)) {
             vars[ident]!!
         } else {
@@ -129,63 +140,145 @@ class Calculator {
         }
     }
 
-    /**
-     * Expression is in the form (intValue | variable) [operator (intValue | variable) [...]]
-     * @return the result of evaluating the expression
-     */
-    private fun evaluateExpression(): Int {
-        // First applyOperator() will add zero, that is, do nothing
-        var result = 0
-        var operator = Operator.PLUS
+    private fun infixToPostfix() {
+        postfix.clear()
+        ops.clear()
 
         while (true) {
-            val number = getInteger()
-            result = applyOperator(operator, number, result)
-
-            if (input.isBlank()) break
-
-            operator = getOperator()
-            if (operator == Operator.UNKNOWN) throw Exception(INVALID_EXPRESSION)
+            processLeftParen()
+            processInteger()
+            if (input.isEmpty()) break
+            processRightParen()
+            if (input.isEmpty()) break
+            processOperator()
         }
 
-        return result
+        // pop all ops
+        while (ops.isNotEmpty() && ops.last() != Operator.LEFT_PAREN) {
+            postfix.addLast(ops.removeLast())
+        }
+
+        if (ops.isNotEmpty()) {
+            throw Exception(INVALID_EXPRESSION)
+        }
+    }
+
+    private fun processInteger() {
+        postfix.addLast(getNumber())
+    }
+
+    private fun processOperator() {
+        val op = getOperator()
+
+        if (op == Operator.UNKNOWN) {
+            throw Exception(INVALID_EXPRESSION)
+        }
+
+        if (ops.isEmpty() ||
+            ops.last() == Operator.LEFT_PAREN ||
+            op.data.precedence > ops.last().data.precedence
+        ) {
+            ops.addLast(op)
+        } else if (op.data.precedence <= ops.last().data.precedence) {
+            while (ops.isNotEmpty() &&
+                op.data.precedence <= ops.last().data.precedence &&
+                ops.last() != Operator.LEFT_PAREN
+            ) {
+                postfix.addLast(ops.removeLast())
+            }
+            ops.addLast(op)
+        } else {
+            throw Exception("How did we get here, else in if operator, processOperator()")
+        }
+    }
+
+    private fun processLeftParen() {
+        input = input.trimStart()
+
+        while (input.isNotEmpty() && input.first() == '(') {
+            ops.addLast(Operator.LEFT_PAREN)
+            input = input.substring(1).trimStart()
+        }
+    }
+
+    private fun processRightParen() {
+        input = input.trimStart()
+
+        while (input.isNotEmpty() && input.first() == ')') {
+            while (ops.isNotEmpty() && ops.last() != Operator.LEFT_PAREN) {
+                postfix.addLast(ops.removeLast())
+            }
+
+            if (ops.isNotEmpty()) {
+                // Remove left paren
+                ops.removeLast()
+            } else {
+                throw Exception(INVALID_EXPRESSION)
+            }
+
+            input = input.substring(1).trimStart()
+        }
+    }
+
+    private fun evaluateExpression(): BigInteger {
+        val result = ArrayDeque<BigInteger>()
+
+        while (postfix.isNotEmpty()) {
+            when (val element = postfix.removeFirst()) {
+                is BigInteger -> result.addLast(element)
+                is Operator -> {
+                    val a = result.removeLast()
+                    val b = result.removeLast()
+                    result.addLast(when (element.data.symbol) {
+                        "+" -> b + a
+                        "-" -> b - a
+                        "*" -> b * a
+                        "/" -> b / a
+                        "^" -> b.pow(a.toInt())
+                        else -> throw Exception(INVALID_EXPRESSION)
+                    })
+                }
+            }
+        }
+
+        return result.removeLast()
     }
 
     /**
      * Get an integer or a variable value from the input string.
      */
-    private fun getInteger(): Int {
+    private fun getNumber(): BigInteger {
         input = input.trimStart()
         if (input.isEmpty()) throw Exception(INVALID_EXPRESSION)
-        val matchResults = intRegex.find(input)
-        val result: Int
+        val matchResults = numberRegex.find(input)
+        val result: BigInteger
 
-        // If you don't get an integer value from the regex, try a variable
+        // If you don't get a number value from the regex, try a variable
         if (matchResults == null) {
             result = getVariable(getIdent())
-            input = input.replace(identRegex, "")
+            input = input.replace(identRegex, "").trimStart()
         } else {
-            result = matchResults.value.toInt()
-            input = input.replace(intRegex, "")
+            result = matchResults.value.toBigInteger()
+            input = input.replace(numberRegex, "").trimStart()
         }
 
         return result
     }
 
     /**
-     * Get a valid operator
+     * Get a valid operator, (parentheses are operators)
      */
     private fun getOperator(): Operator {
         input = input.trimStart()
         val matchResults = opRegex.find(input) ?: return Operator.UNKNOWN
         val result = matchResults.value
-        input = input.replace(opRegex, "")
+        input = input.replace(opRegex, "").trimStart()
 
         return checkOperator(result)
     }
 
     /**
-     * Return an operator, possibly UNKNOWN.  Takes care or multiple '+' or '-'.
+     * @return an operator, possibly UNKNOWN, based on symbol.  Takes care or multiple '+' or '-'.
      */
     private fun checkOperator(operator: String): Operator {
         if (operator.matches("\\++".toRegex())) {
@@ -199,20 +292,8 @@ class Calculator {
         return when (operator) {
             "*" -> Operator.MULTIPLY
             "/" -> Operator.DIVIDE
+            "^" -> Operator.EXPONENT
             else -> Operator.UNKNOWN
-        }
-    }
-
-    /**
-     * Apply this operator and number to the result
-     */
-    private fun applyOperator(operator: Operator, number: Int, result: Int): Int {
-        return when (operator) {
-            Operator.PLUS -> result + number
-            Operator.MINUS -> result - number
-            Operator.MULTIPLY -> result * number
-            Operator.DIVIDE -> result / number
-            else -> result
         }
     }
 }

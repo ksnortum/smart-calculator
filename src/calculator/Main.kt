@@ -37,6 +37,8 @@ class Calculator {
     private var input = ""
 
     fun run() {
+        println("Enter your expression.  Type /help for help or /exit to quit:")
+
         while (true) {
             input = readln().trim()
             if (input.isEmpty()) continue
@@ -45,7 +47,7 @@ class Calculator {
             if (input.startsWith('/')) {
                 when (input) {
                     "/exit" -> break
-                    "/help" -> println("The program calculates the value of the expression")
+                    "/help" -> printHelp()
                     else -> println("Unknown Command")
                 }
             } else {
@@ -64,7 +66,7 @@ class Calculator {
             }
         }
 
-        println("Bye!")
+        println("Exiting calculator")
     }
 
     /**
@@ -295,6 +297,22 @@ class Calculator {
             "^" -> Operator.EXPONENT
             else -> Operator.UNKNOWN
         }
+    }
+
+    private fun printHelp() {
+        println("This is a command-line calculator that will evaluate an expression you enter.  It is\n" +
+                "limited to integers, but they can be arbitrarily large.  Operators are limited to\n" +
+                "addition (+), subtraction (-), multiplication (*), division(/), and exponentiation (^).\n" +
+                "The normal precedence of operator is enforced and parentheses can override this.  Errors\n" +
+                "are displayed for malformed expressions.  Variables can be set to hold values (but not\n" +
+                "expressions).  Identifiers are made of upper and lowercase Latin character.  Using\n" +
+                "variables looks like this:\n" +
+                "\n" +
+                "a = 12\n" +
+                "b = 4\n" +
+                "a + b\n" +
+                "\n" +
+                "Type /exit to quit the program and /help to see this message.")
     }
 }
 
